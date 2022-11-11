@@ -149,8 +149,37 @@ pub fn run_shell(_args : Args) {
             continue;
         }
 
-        run_command(&tokens);        
+        let meta_tokens = sequence(&tokens);
+        for toks in meta_tokens.iter() {
+            run_command(&toks);
+        } 
+        
     }
+
+}
+
+fn sequence<'a>(tokens: &'a Vec<String>) -> Vec<Vec<String>> {
+
+    let mut v2: Vec<Vec<String>> = Vec::new();
+
+    let mut v: Vec<String> = Vec::new();
+
+    for s in tokens.iter() {
+
+        match s.as_str() {
+
+            ";" => {
+                v2.push(v.clone());
+                v = Vec::new();
+            }
+            _ => v.push(s.to_string())
+        }
+    }
+    if !v.is_empty() {
+        v2.push(v);
+    }
+
+    return v2;
 
 }
 
