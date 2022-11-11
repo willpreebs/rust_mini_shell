@@ -1,5 +1,3 @@
-
-
 use std::env::Args;
 use std::io;
 use std::io::Write;
