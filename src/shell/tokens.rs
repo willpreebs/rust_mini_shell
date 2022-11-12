@@ -52,11 +52,12 @@ pub fn get_tokens(input : String) -> Vec<String> {
     if buf.len() > 0 {
     add_token(&mut tokens, buf);
     }
-
+    
     return tokens;
 }
 
 fn add_token(tokens : &mut Vec<String>, buf : Vec<char>) {
+
     tokens.push(buf.iter().collect::<String>());
 }
 
