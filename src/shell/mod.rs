@@ -1,11 +1,8 @@
 use std::env::Args;
 use std::io;
 use std::io::Write;
-use std::ffi::CStr;
-use std::ffi::CString;
-use std::fs::File;
-use std::os::unix::prelude::IntoRawFd;
-use gag::Redirect;
+use std::ffi::{CStr, CString};
+use libc::{O_CREAT, O_TRUNC, O_WRONLY};
 use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
 
 mod tokens;
@@ -59,7 +56,7 @@ pub fn run_shell(_args : Args) {
         dispatch(&tokens);
     }
 }
-
+// runs tokens through functions to find sequencing or output redirect
 fn dispatch<'a>(tokens: &'a Vec<String>) {
 
     let meta_tokens: Vec<Vec<String>> = sequence(&tokens);
@@ -121,18 +118,22 @@ fn filter_redirects<'a>(user_input: &'a Vec<String>) -> (String, usize) {
     return (String::new(), 0);
 }
 
-fn redirect_output_and_run<'a>(dst: &String, user_input: &'a Vec<String>, index: usize) {
-    
-    let f = File::create(dst)
-    .expect(format!("Failed to create file: {}", dst).as_str()).into_raw_fd();
+fn redirect_output_and_run<'a>(dst: &String, user_input: &'a Vec<String>, index: usize) {  
 
     let (filename, filename_c, cstrs) = produce_c_strings(user_input);
     let execute_args = cstrs.get(0..index).unwrap().to_vec();
 
+    let file: *const u8 = dst.as_ptr();
+
+    let file = file as *const i8;
+
     match unsafe{fork()} {
 
         Ok(ForkResult::Child) => {
-            Redirect::stdout(f).expect("Failed to redirect to new file");
+            unsafe {
+                libc::close(1);
+                libc::open(file, O_WRONLY | O_CREAT | O_TRUNC);
+            }
             execute_within_child(filename, &filename_c, &execute_args);
         }
         Ok(ForkResult::Parent{child: _, ..}) => {
