@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 nix = "0.22.0"
+gag = "1.0.0"
+filedescriptor = "0.8.2"
