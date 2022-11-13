@@ -192,24 +192,13 @@ fn run_cd<'a>(user_input: &'a Vec<String>) {
     std::env::set_current_dir(user_input[1].clone()).expect("failed to cd");
 }
 
-fn convert_str_to_cstring<'a>(s: &'a str) -> CString{
-
-    let cstring = CString::new(s).expect("failure converting str to CString");
-    return CString::from(cstring);
-}
-
-fn map_strings_to_cstrings<'a>(user_input: &'a Vec<String>) -> Vec<CString> {
-
-    return user_input.iter().map(|s| convert_str_to_cstring(s)).collect::<Vec<CString>>();
-}
-
-
 fn produce_c_strings<'a>(user_input: &'a Vec<String>) -> (String, CString, Vec<CString>) {
 
     let filename: String = user_input[0].clone();   
     let filename_c: CString = CString::new(filename.as_str()).expect("CString conversion failed");
 
-    let cstrs: Vec<CString> = map_strings_to_cstrings(&user_input);
+    let cstrs: Vec<CString> = user_input.iter()
+    .map(|s| CString::new(s as &str).expect("failure converting str to CString")).collect::<Vec<CString>>();
 
     return (filename, filename_c, cstrs);
 }
@@ -222,54 +211,6 @@ fn execute_within_child<'a, 'b>(filename : String, filename_c : &'a CStr, cstrs:
             println!("Program not found: {}", filename);
         }
     }
-}
-
-#[cfg(test)]
-mod run_tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_str_to_cstr() {
-
-        let test_str = "testing";
-
-        let converted_c_str = convert_str_to_cstring(test_str);
-
-        let reconverted_str = converted_c_str.to_str().expect("failed reconversion");
-        assert_eq!(test_str, reconverted_str);
-    }
-
-    #[test]
-    fn test_convert_str_to_cstr2() {
-
-        let test_str = "testing 1 2 3 \n";
-
-        let converted_c_str = convert_str_to_cstring(test_str);
-
-        let reconverted_str = converted_c_str.to_str().expect("failed reconversion");
-        assert_eq!(test_str, reconverted_str);
-    }
-
-    #[test]
-    fn test_map_to_cstrings() {
-
-        let test_str_vec = vec!["testing", "1", "2", "3"];
-        let test_string_vec = test_str_vec.iter().map(|&s|String::from(s)).collect::<Vec<String>>();        
-
-        let result = map_strings_to_cstrings(&test_string_vec);
-
-        let expected_result = vec![CString::new("testing").expect("fail"),
-                                                CString::new("1").expect("fail"),
-                                                CString::new("2").expect("fail"), 
-                                                CString::new("3").expect("fail")];
-
-        for i in 0..result.len() {
-            assert_eq!(result[i], expected_result[i]);
-        } 
-    }
-
-
-
 }
 
 #[cfg(test)]
