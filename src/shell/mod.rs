@@ -2,7 +2,7 @@ use std::env::Args;
 use std::io;
 use std::io::Write;
 use std::ffi::{CStr, CString};
-use libc::{O_CREAT, O_TRUNC, O_WRONLY};
+use libc::{O_CREAT, O_TRUNC, O_WRONLY, O_RDONLY};
 use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
 
 mod tokens;
@@ -12,6 +12,66 @@ const BUILT_INS : [&str; 2] = ["quit", "prev"];
 
 struct Prev {
     strings: Vec<String>
+}
+
+#[derive(PartialEq)]
+#[derive(Debug)]
+struct Redirect {
+    input: bool,
+    output: bool,
+    src: String,
+    dst: String,
+    command_tokens: Vec<String>
+}
+
+trait Detect {
+    fn detect<'a>(user_input: &'a Vec<String>) -> Self;
+}
+
+impl Detect for Redirect {
+
+    fn detect<'a>(user_input: &'a Vec<String>) -> Redirect {
+
+        let mut input = false;
+        let mut output = false;
+        let mut src = String::new();
+        let mut dst = String::new();
+        let mut command_tokens: Vec<String> = user_input.clone();
+
+        let mut min_idx = user_input.len();
+        
+        for (i, s) in user_input.iter().enumerate() {
+            match s.as_str() {
+                ">" => {
+                    if !user_input[i + 1].is_empty() {
+                        output = true;
+                        dst = user_input[i + 1].clone();
+
+                        if min_idx > i {
+                            min_idx = i;
+                        }
+                    } 
+                }
+                "<" => {
+                    if !user_input[i + 1].is_empty() {
+                        input = true;
+                        src = user_input[i + 1].clone();
+
+                        if min_idx > i {
+                            min_idx = i;
+                        }
+                    }
+                }
+                _ => ()
+            }
+        }
+        
+        if input || output {
+            command_tokens = user_input.get(0..min_idx).unwrap().to_vec();
+        }
+
+        return Redirect {input, output, src, dst, command_tokens};
+    }
 }
 
 pub fn run_shell(_args : Args) {
@@ -60,20 +120,49 @@ pub fn run_shell(_args : Args) {
 fn dispatch<'a>(tokens: &'a Vec<String>) {
 
     let meta_tokens: Vec<Vec<String>> = sequence(&tokens);
-        for toks in meta_tokens.iter() {
-            if toks[0].eq("cd") {
-                run_cd(&toks);
-                continue;
-            }
-            let (file_output, index) = filter_redirects(&toks);
-            if file_output.is_empty() {
-                run_command(&toks);
-            }
-            else {
-                println!("redirect detected: {}", file_output);
-                redirect_output_and_run(&file_output, &toks, index);
-            }
+    for toks in meta_tokens.iter() {
+        if toks[0].eq("cd") {
+            run_cd(&toks);
+            continue;
         }
+        let red: Redirect = Redirect::detect(&toks);
+        handle_redirects(red);
+    }
+}
+
+fn handle_redirects<'a>(red: Redirect) {
+
+    let (filename, filename_c, cstrs) = produce_c_strings(&red.command_tokens);
+
+    let output_file_ptr: *const u8 = red.dst.as_ptr();
+    let input_file_ptr: *const u8 = red.src.as_ptr();
+
+    let output_file = output_file_ptr as *const i8;
+    let input_file = input_file_ptr as *const i8;
+    
+
+    match unsafe{fork()} {
+
+        Ok(ForkResult::Child) => {
+
+            unsafe {
+                if red.input {
+                    libc::close(0);
+                    libc::open(input_file, O_RDONLY);
+                }
+                if red.output {
+                    libc::close(1);
+                    libc::open(output_file, O_WRONLY | O_CREAT | O_TRUNC);
+                }
+            }
+            execute_within_child(filename, &filename_c, &cstrs);
+        }
+        Ok(ForkResult::Parent{child: _, ..}) => {
+            wait().expect("Child process failed");
+        }
+        Err(e) => println!("fork failed with error: {}", e)
+    }
+
 }
 
 fn sequence<'a>(tokens: &'a Vec<String>) -> Vec<Vec<String>> {
@@ -103,46 +192,6 @@ fn run_cd<'a>(user_input: &'a Vec<String>) {
     std::env::set_current_dir(user_input[1].clone()).expect("failed to cd");
 }
 
-fn filter_redirects<'a>(user_input: &'a Vec<String>) -> (String, usize) {
-
-    for (i, s) in user_input.iter().enumerate() {
-        match s.as_str() {
-            ">" => {
-                if !user_input[i + 1].is_empty() {
-                    return (user_input[i + 1].clone(), i);
-                } 
-            }
-            _ => ()
-        }
-    }
-    return (String::new(), 0);
-}
-
-fn redirect_output_and_run<'a>(dst: &String, user_input: &'a Vec<String>, index: usize) {  
-
-    let (filename, filename_c, cstrs) = produce_c_strings(user_input);
-    let execute_args = cstrs.get(0..index).unwrap().to_vec();
-
-    let file: *const u8 = dst.as_ptr();
-
-    let file = file as *const i8;
-
-    match unsafe{fork()} {
-
-        Ok(ForkResult::Child) => {
-            unsafe {
-                libc::close(1);
-                libc::open(file, O_WRONLY | O_CREAT | O_TRUNC);
-            }
-            execute_within_child(filename, &filename_c, &execute_args);
-        }
-        Ok(ForkResult::Parent{child: _, ..}) => {
-            wait().expect("Child process failed");
-        }
-        Err(e) => println!("fork failed with error: {}", e)
-    }
-}
-
 fn convert_str_to_cstring<'a>(s: &'a str) -> CString{
 
     let cstring = CString::new(s).expect("failure converting str to CString");
@@ -163,23 +212,6 @@ fn produce_c_strings<'a>(user_input: &'a Vec<String>) -> (String, CString, Vec<C
     let cstrs: Vec<CString> = map_strings_to_cstrings(&user_input);
 
     return (filename, filename_c, cstrs);
-}
-
-fn run_command<'a>(user_input: &'a Vec<String>) {
-
-    let (filename, filename_c, cstrs) = produce_c_strings(user_input);
-
-    match unsafe{fork()} {
-
-        Ok(ForkResult::Child) => {
-            execute_within_child(filename, &filename_c, &cstrs);
-        }
-        Ok(ForkResult::Parent{child: _, ..}) => {
-            wait().expect("Child process failed");
-        }
-
-        Err(e) => println!("fork failed with error: {}", e)
-    }
 }
 
 fn execute_within_child<'a, 'b>(filename : String, filename_c : &'a CStr, cstrs: &'b Vec<CString>) {
@@ -273,28 +305,21 @@ mod sequence_tests {
 }
 
 #[cfg(test)]
-mod output_redirect_tests {
+mod redirect_tests {
     use super::*;
 
     #[test]
-    fn filter_redirects_test() {
+    fn redirect_test1() {
 
         let sample_tokens: Vec<String> = vec!["ex", "howdy", ">", "list"].iter().map(|&s| s.into()).collect();
 
-        let expected_result = String::from("list");
+        let input = false;
+        let output = true;
+        let src = String::new();
+        let dst = String::from("list");
+        let command_tokens = vec![String::from("ex"), String::from("howdy")];
+        let expected_result = Redirect{input, output, src, dst, command_tokens};
 
-        assert_eq!(filter_redirects(&sample_tokens).0, expected_result);
-    }
-
-
-    #[test]
-    fn filter_redirects_test2() {
-
-        let sample_tokens: Vec<String> = vec!["ex", ";", "howdy", ">", "list"]
-        .iter().map(|&s| s.into()).collect();
-
-        let expected_result = String::from("list");
-
-        assert_eq!(filter_redirects(&sample_tokens).0, expected_result);
+        assert_eq!(Redirect::detect(&sample_tokens), expected_result);
     }
 }
