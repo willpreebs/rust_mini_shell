@@ -1,6 +1,6 @@
 # rust_mini_shell
 
-Welcome to the my rust mini shell implementation.
+Welcome to the my rust mini shell implementation. This is my first rust project so keep that in mind :)
 
 ## Some info on the project
 
