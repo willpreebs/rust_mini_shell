@@ -116,13 +116,15 @@ pub fn run_shell(_args : Args) {
         dispatch(&tokens);
     }
 }
-// runs tokens through functions to find sequencing or output redirect
+// seperates sequences of tokens and runs commands based on redirections
 fn dispatch<'a>(tokens: &'a Vec<String>) {
 
     let meta_tokens: Vec<Vec<String>> = sequence(&tokens);
     for toks in meta_tokens.iter() {
+
         if toks[0].eq("cd") {
-            run_cd(&toks);
+
+            std::env::set_current_dir(&toks[1].clone()).expect("failed to cd");
             continue;
         }
         let red: Redirect = Redirect::detect(&toks);
@@ -132,7 +134,11 @@ fn dispatch<'a>(tokens: &'a Vec<String>) {
 
 fn handle_redirects<'a>(red: Redirect) {
 
-    let (filename, filename_c, cstrs) = produce_c_strings(&red.command_tokens);
+    let filename: String = red.command_tokens[0].clone();   
+    let filename_c: CString = CString::new(filename.as_str()).expect("CString conversion failed");
+
+    let cstrs: Vec<CString> = red.command_tokens.iter()
+    .map(|s| CString::new(s as &str).expect("failure converting str to CString")).collect::<Vec<CString>>();
 
     let output_file_ptr: *const u8 = red.dst.as_ptr();
     let input_file_ptr: *const u8 = red.src.as_ptr();
@@ -185,22 +191,6 @@ fn sequence<'a>(tokens: &'a Vec<String>) -> Vec<Vec<String>> {
     }
 
     return v2;
-}
-
-fn run_cd<'a>(user_input: &'a Vec<String>) {
-
-    std::env::set_current_dir(user_input[1].clone()).expect("failed to cd");
-}
-
-fn produce_c_strings<'a>(user_input: &'a Vec<String>) -> (String, CString, Vec<CString>) {
-
-    let filename: String = user_input[0].clone();   
-    let filename_c: CString = CString::new(filename.as_str()).expect("CString conversion failed");
-
-    let cstrs: Vec<CString> = user_input.iter()
-    .map(|s| CString::new(s as &str).expect("failure converting str to CString")).collect::<Vec<CString>>();
-
-    return (filename, filename_c, cstrs);
 }
 
 fn execute_within_child<'a, 'b>(filename : String, filename_c : &'a CStr, cstrs: &'b Vec<CString>) {
