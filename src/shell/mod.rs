@@ -2,7 +2,7 @@ use std::env::Args;
 use std::io;
 use std::io::Write;
 use std::ffi::{CStr, CString};
-use libc::{O_CREAT, O_TRUNC, O_WRONLY, O_RDONLY};
+use libc::{O_CREAT, O_TRUNC, O_WRONLY, O_RDONLY, exit};
 use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
 
 mod tokens;
@@ -36,9 +36,9 @@ impl Detect for Redirect {
         let mut output = false;
         let mut src = String::new();
         let mut dst = String::new();
-        let mut command_tokens: Vec<String> = user_input.clone();
-
-        let mut min_idx = user_input.len();
+        let mut command_tokens: Vec<String> = Vec::new();
+        
+        let mut skip = 0;
         
         for (i, s) in user_input.iter().enumerate() {
             match s.as_str() {
@@ -46,28 +46,30 @@ impl Detect for Redirect {
                     if !user_input[i + 1].is_empty() {
                         output = true;
                         dst = user_input[i + 1].clone();
-
-                        if min_idx > i {
-                            min_idx = i;
-                        }
+                        skip = 1;
                     } 
                 }
                 "<" => {
                     if !user_input[i + 1].is_empty() {
                         input = true;
                         src = user_input[i + 1].clone();
-
-                        if min_idx > i {
-                            min_idx = i;
-                        }
+                        skip = 1;
                     }
                 }
-                _ => ()
+                _ => {
+                    if skip == 0 {
+                        command_tokens.push(String::from(s));
+                    }
+                    else {
+                        skip -= 1;
+                    }
+                    
+                }
             }
         }
-        
-        if input || output {
-            command_tokens = user_input.get(0..min_idx).unwrap().to_vec();
+
+        if !(input || output) {
+            command_tokens = user_input.clone();
         }
 
         return Redirect {input, output, src, dst, command_tokens};
@@ -140,25 +142,40 @@ fn handle_redirects<'a>(red: Redirect) {
     let cstrs: Vec<CString> = red.command_tokens.iter()
     .map(|s| CString::new(s as &str).expect("failure converting str to CString")).collect::<Vec<CString>>();
 
-    let output_file_ptr: *const u8 = red.dst.as_ptr();
-    let input_file_ptr: *const u8 = red.src.as_ptr();
-
-    let output_file = output_file_ptr as *const i8;
-    let input_file = input_file_ptr as *const i8;
+    let output_file = red.dst.as_ptr() as *const i8;
+    let input_file = red.src.as_ptr() as *const i8;
     
-
     match unsafe{fork()} {
 
         Ok(ForkResult::Child) => {
 
             unsafe {
+                //bit of C trickery to replace stdin or stdout with a new file
                 if red.input {
-                    libc::close(0);
-                    libc::open(input_file, O_RDONLY);
+                    let close_result = libc::close(0);
+                    if close_result == -1 {
+                        println!("Error closing stdin");
+                        exit(0);
+                    }
+
+                    let open_result = libc::open(input_file, O_RDONLY);
+                    if open_result == -1 {
+                        println!("File not found: {}", &red.src);
+                        exit(0);
+                    }
                 }
                 if red.output {
-                    libc::close(1);
-                    libc::open(output_file, O_WRONLY | O_CREAT | O_TRUNC);
+                    let close_result = libc::close(1);
+                    if close_result == -1 {
+                        println!("Error closing stdout");
+                        exit(0);
+                    }
+
+                    let open_result = libc::open(output_file, O_WRONLY | O_CREAT | O_TRUNC);
+                    if open_result == -1 {
+                        println!("File not found: {}", &red.dst);
+                        exit(0);
+                    }
                 }
             }
             execute_within_child(filename, &filename_c, &cstrs);
@@ -249,6 +266,40 @@ mod redirect_tests {
         let src = String::new();
         let dst = String::from("list");
         let command_tokens = vec![String::from("ex"), String::from("howdy")];
+        let expected_result = Redirect{input, output, src, dst, command_tokens};
+
+        assert_eq!(Redirect::detect(&sample_tokens), expected_result);
+    }
+
+
+    
+    #[test]
+    fn redirect_test2() {
+
+        let sample_tokens: Vec<String> = vec!["ex", "howdy", "<", "in", ">", "out"].iter().map(|&s| s.into()).collect();
+
+        let input = true;
+        let output = true;
+        let src = String::from("in");
+        let dst = String::from("out");
+        let command_tokens = vec![String::from("ex"), String::from("howdy")];
+        let expected_result = Redirect{input, output, src, dst, command_tokens};
+
+        assert_eq!(Redirect::detect(&sample_tokens), expected_result);
+    }
+
+
+
+    #[test]
+    fn redirect_test3() {
+
+        let sample_tokens: Vec<String> = vec!["ex", "howdy", "<", "in", "in2", ">", "out"].iter().map(|&s| s.into()).collect();
+
+        let input = true;
+        let output = true;
+        let src = String::from("in");
+        let dst = String::from("out");
+        let command_tokens = vec![String::from("ex"), String::from("howdy"), String::from("in2")];
         let expected_result = Redirect{input, output, src, dst, command_tokens};
 
         assert_eq!(Redirect::detect(&sample_tokens), expected_result);
