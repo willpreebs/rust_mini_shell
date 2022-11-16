@@ -240,11 +240,9 @@ fn execute_cd<'a>(path : &'a String) {
 }
 
 fn execute_source<'a>(command_tokens : &Vec<String>) {
-    // open file at command_tokens[1] and read line by line, executing each one as a command
 
     let mut commands : Vec<Vec<String>> = Vec::new(); 
 
-    // for each line in file, tokenize, sequence and add to lines
     let filename = command_tokens[1].clone();
     let file_result = File::open(&filename);
     let file: File;
@@ -252,7 +250,7 @@ fn execute_source<'a>(command_tokens : &Vec<String>) {
     match file_result {
         Ok(t) => file = t,
         Err(e) => {
-            println!("Source file not found: {}. Error: {}", &filename.clone(), e);
+            println!("Error: {} in finding file: {}", e, &filename.clone());
             return;
         }
     }
