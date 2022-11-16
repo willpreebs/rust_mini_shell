@@ -1,9 +1,10 @@
 use std::env::Args;
-use std::io;
+use std::io::{self, BufRead};
 use std::io::Write;
 use std::ffi::{CStr, CString};
 use libc::{O_CREAT, O_TRUNC, O_WRONLY, O_RDONLY, exit};
 use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
+use std::fs::File;
 
 mod tokens;
 
@@ -142,8 +143,8 @@ fn handle_redirects<'a>(red: Redirect) {
     let cstrs: Vec<CString> = red.command_tokens.iter()
     .map(|s| CString::new(s as &str).expect("failure converting str to CString")).collect::<Vec<CString>>();
 
-    let output_file = red.dst.as_ptr() as *const i8;
-    let input_file = red.src.as_ptr() as *const i8;
+    let output_file = red.dst.trim().as_ptr() as *const i8;
+    let input_file = red.src.trim().as_ptr() as *const i8;
 
     if BUILT_IN_MULT_ARGS.contains(&red.command_tokens[0].as_str()) && red.command_tokens.len() > 1 {
 
@@ -238,8 +239,40 @@ fn execute_cd<'a>(path : &'a String) {
     }
 }
 
-fn execute_source<'a>(_command_tokens : &Vec<String>) {
+fn execute_source<'a>(command_tokens : &Vec<String>) {
     // open file at command_tokens[1] and read line by line, executing each one as a command
+
+    let mut commands : Vec<Vec<String>> = Vec::new(); 
+
+    // for each line in file, tokenize, sequence and add to lines
+    let filename = command_tokens[1].clone();
+    let file_result = File::open(&filename);
+    let file: File;
+
+    match file_result {
+        Ok(t) => file = t,
+        Err(e) => {
+            println!("Source file not found: {}. Error: {}", &filename.clone(), e);
+            return;
+        }
+    }
+    let buf_reader = io::BufReader::new(file);
+
+    for line in buf_reader.lines() {
+        match line {
+            Ok(s) => {
+                let tokens = tokens::get_tokens(s);
+                commands.push(tokens);
+            }
+            Err(_) => println!("Error reading line")
+        }
+    }
+
+    for command in commands.iter() {
+        dispatch(command);
+    }
+
+
 }
 
 #[cfg(test)]
