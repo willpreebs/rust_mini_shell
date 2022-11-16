@@ -8,7 +8,12 @@ use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
 mod tokens;
 
 const SHELL_PROMPT : &str = "shell $ ";
-const BUILT_INS : [&str; 2] = ["quit", "prev"];
+
+// built-in commands with no additional arguments
+const BUILT_IN_SINGLE_ARG : [&str; 2] = ["quit", "prev"];
+
+// built-in commands with possible additional arguments
+const BUILT_IN_MULT_ARGS : [&str; 2] = ["cd", "source"];
 
 struct Prev {
     strings: Vec<String>
@@ -94,7 +99,7 @@ pub fn run_shell(_args : Args) {
         let user_input = String::from(user_input.trim());
         let tokens: Vec<String> = tokens::get_tokens(user_input.clone()); 
 
-        if BUILT_INS.contains(&user_input.to_ascii_lowercase().as_str()) {
+        if BUILT_IN_SINGLE_ARG.contains(&user_input.to_ascii_lowercase().as_str()) {
 
             match user_input.to_ascii_lowercase().as_str() {
                 "quit" => {
@@ -124,11 +129,6 @@ fn dispatch<'a>(tokens: &'a Vec<String>) {
     let meta_tokens: Vec<Vec<String>> = sequence(&tokens);
     for toks in meta_tokens.iter() {
 
-        if toks[0].eq("cd") {
-
-            std::env::set_current_dir(&toks[1].clone()).expect("failed to cd");
-            continue;
-        }
         let red: Redirect = Redirect::detect(&toks);
         handle_redirects(red);
     }
@@ -144,6 +144,16 @@ fn handle_redirects<'a>(red: Redirect) {
 
     let output_file = red.dst.as_ptr() as *const i8;
     let input_file = red.src.as_ptr() as *const i8;
+
+    if BUILT_IN_MULT_ARGS.contains(&red.command_tokens[0].as_str()) && red.command_tokens.len() > 1 {
+
+        match red.command_tokens[0].clone().as_str() {
+            "cd" => execute_cd(&red.command_tokens[1].clone()),
+            "source" => execute_source(&red.command_tokens),
+            _ => ()
+        }
+        return;
+    }
     
     match unsafe{fork()} {
 
@@ -179,6 +189,7 @@ fn handle_redirects<'a>(red: Redirect) {
                 }
             }
             execute_within_child(filename, &filename_c, &cstrs);
+            unsafe{exit(0)}
         }
         Ok(ForkResult::Parent{child: _, ..}) => {
             wait().expect("Child process failed");
@@ -218,6 +229,17 @@ fn execute_within_child<'a, 'b>(filename : String, filename_c : &'a CStr, cstrs:
             println!("Program not found: {}", filename);
         }
     }
+}
+
+fn execute_cd<'a>(path : &'a String) {
+    match std::env::set_current_dir(path) {
+        Ok(_) => (),
+        Err(e) => println!("cd failed with error: {}. Path was {}", e, path)
+    }
+}
+
+fn execute_source<'a>(_command_tokens : &Vec<String>) {
+    // open file at command_tokens[1] and read line by line, executing each one as a command
 }
 
 #[cfg(test)]
