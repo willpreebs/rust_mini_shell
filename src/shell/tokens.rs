@@ -1,6 +1,50 @@
 use std::str::Chars;
 
-pub fn get_tokens(input : String) -> Vec<String> {
+use super::Command;
+
+fn sequence(tokens: &Vec<String>) -> Vec<Vec<String>> {
+
+    let mut v2: Vec<Vec<String>> = Vec::new();
+    let mut v: Vec<String> = Vec::new();
+
+    for s in tokens.iter() {
+        
+        match s.as_str() {
+            ";" => {
+                v2.push(v.clone());
+                v = Vec::new();
+            }
+            _ => v.push(s.to_string())
+        }
+    }
+    if !v.is_empty() {
+        v2.push(v);
+    }
+
+    return v2;
+}
+
+fn convert_vec_to_command(vec: Vec<String>) -> Command {
+    return Command::Tokens(Box::new(vec));
+}
+
+pub fn get_command(input: &str) -> Command {
+    let vec = get_tokens(input);
+
+    let seq = sequence(&vec);
+    if seq.len() == 1 {
+        return Command::Tokens(Box::new(seq.get(0).unwrap().to_vec()));
+    } 
+    else {
+        let mut com_list = Vec::new();
+        for sub in seq {
+            com_list.push(convert_vec_to_command(sub));
+        }
+        return Command::Commands(Box::new(com_list)); 
+    }
+}
+
+pub fn get_tokens(input : &str) -> Vec<String> {
 
     let iter = input.chars();
     let mut tokens: Vec<String> = Vec::new();
@@ -92,10 +136,10 @@ mod token_tests{
 
         let slice = "example_input";
 
-        let input : String = String::from(slice);
+        // let input : String = String::from(slice);
         let result = vec![String::from(slice)];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
         
     }
 
@@ -104,10 +148,9 @@ mod token_tests{
 
         let slice = "input1 input2";
 
-        let input : String = String::from(slice);
         let result = vec![String::from("input1"), String::from("input2")];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
         
     }
 
@@ -116,10 +159,9 @@ mod token_tests{
 
         let slice = "input1 input2 ";
 
-        let input : String = String::from(slice);
         let result = vec![String::from("input1"), String::from("input2")];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
         
     }
 
@@ -128,10 +170,9 @@ mod token_tests{
 
         let slice = "input1 < input2";
 
-        let input : String = String::from(slice);
         let result = vec![String::from("input1"), String::from("<"), String::from("input2")];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
         
     }
 
@@ -140,12 +181,9 @@ mod token_tests{
     fn test_with_quotation_tokens() {
 
         let slice = r#"input1 "filename" input2 "#;
-
-        let input : String = String::from(slice);
-
         let result = vec![String::from("input1"), String::from("filename"), String::from("input2")];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
 
     }
 
@@ -153,12 +191,9 @@ mod token_tests{
     fn test_with_quotation_tokens2() {
 
         let slice = r#"input1 "file < ... name" input2 "#;
-
-        let input : String = String::from(slice);
-
         let result = vec![String::from("input1"), String::from("file < ... name"), String::from("input2")];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
 
     }
 
@@ -192,15 +227,13 @@ mod token_tests{
     fn test_with_special_character_tokens2() {
 
         let slice = "input1< >>input2";
-
-        let input : String = String::from(slice);
         let result = vec![String::from("input1"), 
                                         String::from("<"), 
                                         String::from(">"), 
                                         String::from(">"), 
                                         String::from("input2")];
 
-        assert_eq!(get_tokens(input), result);
+        assert_eq!(get_tokens(slice), result);
         
     }
 

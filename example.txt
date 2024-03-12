@@ -1,0 +1,4 @@
+Hello, this is an example of a file to grep
+jokingly he sighed
+happy birthday
+rigorously prove this

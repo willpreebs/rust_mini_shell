@@ -1,0 +1,5 @@
+echo "begin executing source.txt commands"
+pwd
+uptime
+ls -a
+rev hi.txt 

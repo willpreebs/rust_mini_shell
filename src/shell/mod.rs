@@ -6,19 +6,20 @@ use libc::{O_CREAT, O_TRUNC, O_WRONLY, O_RDONLY, exit};
 use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
 use std::fs::File;
 
+mod scanner;
 mod tokens;
 
 const SHELL_PROMPT : &str = "shell $ ";
 
 // built-in commands with no additional arguments
-const BUILT_IN_SINGLE_ARG : [&str; 2] = ["quit", "prev"];
+const BUILT_IN_SINGLE_ARG : [&str; 3] = ["quit", "prev", "help"];
 
 // built-in commands with possible additional arguments
 const BUILT_IN_MULT_ARGS : [&str; 2] = ["cd", "source"];
 
-struct Prev {
-    strings: Vec<String>
-}
+// struct Prev {
+//     strings: Vec<String>
+// }
 
 #[derive(PartialEq)]
 #[derive(Debug)]
@@ -28,6 +29,11 @@ struct Redirect {
     src: String,
     dst: String,
     command_tokens: Vec<String>
+}
+
+pub enum Command {
+    Tokens(Box<Vec<String>>),
+    Commands(Box<Vec<Command>>)
 }
 
 trait Detect {
@@ -82,13 +88,28 @@ impl Detect for Redirect {
     }
 }
 
+fn output(out: &str, newline: bool) {
+    if newline {
+        println!("{}", out);
+    }
+    else {
+        print!("{}", out);
+    }
+}
+
+fn get_help_message() -> String {
+    return scanner::scan_in_text("help.txt");
+}
+
 pub fn run_shell(_args : Args) {
 
-    let mut prev : Prev = Prev{strings: Vec::new()};
+    output(get_help_message().as_str(), false);
+
+    let mut prev : Box<Vec<String>> = Box::new(Vec::new());
 
     loop {
 
-        print!("{}", SHELL_PROMPT);
+        output(SHELL_PROMPT, false);
         io::stdout().flush().unwrap();
 
         let mut user_input : String = String::new();
@@ -97,37 +118,64 @@ pub fn run_shell(_args : Args) {
             .read_line(&mut user_input)
             .expect("Failed to read line");
 
-        let user_input = String::from(user_input.trim());
-        let tokens: Vec<String> = tokens::get_tokens(user_input.clone()); 
+        let user_input = user_input.trim();
 
-        if BUILT_IN_SINGLE_ARG.contains(&user_input.to_ascii_lowercase().as_str()) {
+        
+        let tokens: Vec<String> = tokens::get_tokens(user_input); 
+        let command: Command = tokens::get_command(user_input);
 
-            match user_input.to_ascii_lowercase().as_str() {
-                "quit" => {
-                    println!("Goodbye");
-                    break;
-                },
-                "prev" => {
-                    if prev.strings.is_empty() {
-                        continue;
-                    }
-                    dispatch(&prev.strings);
-                    continue;
-                }
-                _ => ()
+        if is_single_arg_built_in(user_input) {
+            let behavior = handle_single_arg_built_in(user_input, &prev);
+            match behavior {
+                LoopBehavior::BREAK => break,
+                LoopBehavior::CONTINUE => continue,
+                LoopBehavior::SKIP => ()
             }
         }
         else {
-            prev = Prev{strings: tokens.clone()}
-        };
+            prev = Box::new(tokens.clone());
+        }
 
-        dispatch(&tokens);
+        // dispatch(&tokens);
+        dispatch_command(&command);
+    }
+}
+
+fn is_single_arg_built_in(input: &str) -> bool {
+    return BUILT_IN_SINGLE_ARG.contains(&input.to_ascii_lowercase().as_str());
+}
+
+enum LoopBehavior {
+    BREAK,
+    CONTINUE,
+    SKIP
+}
+
+fn handle_single_arg_built_in(input: &str, prev: &Box<Vec<String>>) -> LoopBehavior {
+    match input.to_ascii_lowercase().as_str() {
+        "quit" => {
+            output("Goodbye", true);
+            return LoopBehavior::BREAK;
+        },
+        "prev" => {
+            if prev.is_empty() {
+                return LoopBehavior::CONTINUE;
+            }
+            dispatch(prev);
+            return LoopBehavior::CONTINUE;
+        },
+        "help" => {
+            output(get_help_message().as_str(), true);
+            return LoopBehavior::CONTINUE;
+        }
+        _ => return LoopBehavior::SKIP
     }
 }
 // seperates sequences of tokens and runs commands based on redirections
-fn dispatch<'a>(tokens: &'a Vec<String>) {
+fn dispatch(tokens: &Vec<String>) {
 
     let meta_tokens: Vec<Vec<String>> = sequence(&tokens);
+
     for toks in meta_tokens.iter() {
 
         let red: Redirect = Redirect::detect(&toks);
@@ -135,7 +183,22 @@ fn dispatch<'a>(tokens: &'a Vec<String>) {
     }
 }
 
-fn handle_redirects<'a>(red: Redirect) {
+fn dispatch_command(command: &Command) {
+
+    match command {
+        Command::Tokens(boxed_vec) => {
+            let red: Redirect = Redirect::detect(&boxed_vec);
+            handle_redirects(red);
+        }
+        Command::Commands(boxed_vec) => {
+            for c in boxed_vec.iter() {
+                dispatch_command(c);
+            }
+        }
+    }
+}
+
+fn handle_redirects(red: Redirect) {
 
     let filename: String = red.command_tokens[0].clone();   
     let filename_c: CString = CString::new(filename.as_str()).expect("CString conversion failed");
@@ -165,26 +228,26 @@ fn handle_redirects<'a>(red: Redirect) {
                 if red.input {
                     let close_result = libc::close(0);
                     if close_result == -1 {
-                        println!("Error closing stdin");
+                        output("Error closing stdin", true);
                         exit(0);
                     }
 
                     let open_result = libc::open(input_file, O_RDONLY);
                     if open_result == -1 {
-                        println!("File not found: {}", &red.src);
+                        output(format!("File not found: {}", &red.src).as_str(), true);
                         exit(0);
                     }
                 }
                 if red.output {
                     let close_result = libc::close(1);
                     if close_result == -1 {
-                        println!("Error closing stdout");
+                        output("Error closing stdout", true);
                         exit(0);
                     }
 
                     let open_result = libc::open(output_file, O_WRONLY | O_CREAT | O_TRUNC);
                     if open_result == -1 {
-                        println!("File not found: {}", &red.dst);
+                        output(format!("File not found: {}", &red.dst).as_str(), true);
                         exit(0);
                     }
                 }
@@ -195,12 +258,12 @@ fn handle_redirects<'a>(red: Redirect) {
         Ok(ForkResult::Parent{child: _, ..}) => {
             wait().expect("Child process failed");
         }
-        Err(e) => println!("fork failed with error: {}", e)
+        Err(e) => output(format!("fork failed with error: {}", e).as_str(), true)
     }
 
 }
 
-fn sequence<'a>(tokens: &'a Vec<String>) -> Vec<Vec<String>> {
+fn sequence(tokens: &Vec<String>) -> Vec<Vec<String>> {
 
     let mut v2: Vec<Vec<String>> = Vec::new();
     let mut v: Vec<String> = Vec::new();
@@ -222,55 +285,57 @@ fn sequence<'a>(tokens: &'a Vec<String>) -> Vec<Vec<String>> {
     return v2;
 }
 
-fn execute_within_child<'a, 'b>(filename : String, filename_c : &'a CStr, cstrs: &'b Vec<CString>) {
+fn execute_within_child(filename: String, filename_c: &CStr, cstrs: &Vec<CString>) {
 
     match execvp(filename_c, cstrs) {
         Ok(_) => (),
         Err(_) => {
-            println!("Program not found: {}", filename);
+            output(format!("Program not found: {}", filename).as_str(), true);
         }
     }
 }
 
-fn execute_cd<'a>(path : &'a String) {
+fn execute_cd(path: &String) {
     match std::env::set_current_dir(path) {
         Ok(_) => (),
-        Err(e) => println!("cd failed with error: {}. Path was {}", e, path)
+        Err(e) => output(format!("cd failed with error: {}. Path was {}", e, path).as_str(), true)
     }
 }
 
-fn execute_source<'a>(command_tokens : &Vec<String>) {
+fn execute_source(command_tokens : &Vec<String>) {
 
-    let mut commands : Vec<Vec<String>> = Vec::new(); 
-
-    let filename = command_tokens[1].clone();
+    let filename = command_tokens[1].as_str();
     let file_result = File::open(&filename);
     let file: File;
 
     match file_result {
         Ok(t) => file = t,
         Err(e) => {
-            println!("Error: {} in finding file: {}", e, &filename.clone());
+            output(format!("Error: {} in finding file: {}", e, filename).as_str(), true);
             return;
         }
     }
     let buf_reader = io::BufReader::new(file);
+    let mut commands_vec: Vec<Command> = Vec::new();
 
     for line in buf_reader.lines() {
         match line {
             Ok(s) => {
-                let tokens = tokens::get_tokens(s);
-                commands.push(tokens);
+                let command: Command = tokens::get_command(s.as_str());
+                let tokens = tokens::get_tokens(s.as_str());
+                commands_vec.push(command);
             }
-            Err(_) => println!("Error reading line")
+            Err(_) => output("Error reading line", true)
         }
     }
 
-    for command in commands.iter() {
-        dispatch(command);
+    if commands_vec.len() == 1 {
+        dispatch_command(&commands_vec[0]);
     }
-
-
+    else {
+        let c = Command::Commands(Box::new(commands_vec));
+        dispatch_command(&c);
+    }
 }
 
 #[cfg(test)]

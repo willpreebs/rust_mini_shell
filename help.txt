@@ -1,0 +1,8 @@
+Welcome to the Rust Minishell. Type help to see this message.
+
+To exit the Minishell, type quit
+
+Built in commands include cd and source, and type prev to execute the previous command.
+
+Other functionality includes redirecting stdin and stdout, as well as sequencing commands with ';'
+
