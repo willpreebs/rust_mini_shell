@@ -1,50 +1,104 @@
 use std::str::Chars;
 
-use super::Command;
+use super::{output, Command};
 
-fn sequence(tokens: &Vec<String>) -> Vec<Vec<String>> {
+fn sequence(tokens: Vec<String>) -> Vec<Command> {
 
-    let mut v2: Vec<Vec<String>> = Vec::new();
-    let mut v: Vec<String> = Vec::new();
+    if tokens.len() == 0 {
+        return vec![Command::Empty];
+    }
 
-    for s in tokens.iter() {
-        
-        match s.as_str() {
-            ";" => {
-                v2.push(v.clone());
-                v = Vec::new();
+    let r: Vec<&[String]> = tokens.split(|t| t.eq(";")).collect();
+    if r.len() == 1 {
+        return vec![Command::Tokens(Box::new(tokens))];
+    } else {
+        let mut c_vec = Vec::new();
+        for command_arr in tokens.split(|token| token.eq(";")) {
+            let v = command_arr.to_vec();
+            if !v.is_empty() {
+                let a = get_command_from_sequenced_tokens(v);
+                c_vec.push(a);
             }
-            _ => v.push(s.to_string())
         }
+    
+        return c_vec;
     }
-    if !v.is_empty() {
-        v2.push(v);
-    }
-
-    return v2;
 }
 
-fn convert_vec_to_command(vec: Vec<String>) -> Command {
-    return Command::Tokens(Box::new(vec));
+/**
+ * v is a vector holding the tokens of a single command (not including multiple sequenced command)
+ */
+fn get_command_from_sequenced_tokens(v: Vec<String>) -> Command {
+    if v.len() == 0 {
+        Command::Empty
+    } else {
+        // command      input         output
+        // tee file1 < example.txt > file2
+
+        // Output("file2", Input("example.txt", Tokens([tee, file1])))
+        return split_on_redirection(v);
+    }
 }
 
-pub fn get_command(input: &str) -> Command {
-    let vec = get_tokens(input);
-
-    let seq = sequence(&vec);
-    if seq.len() == 1 {
-        return Command::Tokens(Box::new(seq.get(0).unwrap().to_vec()));
-    } 
+fn split_on_redirection(v: Vec<String>) -> Command {
+    // split_output = {[tee, file1, <, example.txt], [file2]
+    let split_output: Vec<&[String]> = v.split(|e| e.eq(">")).collect();
+    if split_output.len() == 1 {
+        return split_on_input(v);
+    }
+    else if split_output.len() != 2 {
+        output("Output redirection failed, cannot redirect output more than once", true);
+        return Command::Empty;
+    }
+    else if split_output[0].is_empty() {
+        output("Output redirection failed, command is required prior to <", true);
+        return Command::Empty;
+    }
+    else if split_output[1].is_empty() {
+        output("Output redirection failed, must include filename to get send output", true);
+        return Command::Empty;
+    }
     else {
-        let mut com_list = Vec::new();
-        for sub in seq {
-            com_list.push(convert_vec_to_command(sub));
-        }
-        return Command::Commands(Box::new(com_list)); 
+        return Command::OutputRedirect(split_output[1][0].clone(), Box::new(split_on_input(v)));
     }
+
+    // -> Output(file2, ) 
 }
 
-pub fn get_tokens(input : &str) -> Vec<String> {
+fn split_on_input(v: Vec<String>) -> Command {
+    // split_input = {[tee, file1], [example.txt, >, file2]
+    let split_input: Vec<&[String]> = v.split(|e| e.eq("<")).collect();
+
+    if split_input.len() == 1 {
+        // no input redirect
+        return Command::Tokens(Box::new(v));
+    }
+        
+    else if split_input.len() != 2 {
+        output("Input redirection failed, cannot redirect input more than once", true);
+        return Command::Empty;
+    }
+
+    else if split_input[0].is_empty() {
+        output("Input redirection failed, command is required prior to <", true);
+        return Command::Empty;
+    }
+    else if split_input[1].is_empty() {
+        output("Input redirection failed, must include filename to get input from", true);
+        return Command::Empty;
+    }
+    else {
+        return Command::InputRedirect(split_input[1][0].clone(), Box::new(Command::Tokens(Box::new(split_input[0].to_vec()))));
+    }
+
+}
+
+pub fn get_command(input: &str) -> Vec<Command> {
+    let vec = tokenize(input);
+    return sequence(vec);
+}
+
+pub fn tokenize(input : &str) -> Vec<String> {
 
     let iter = input.chars();
     let mut tokens: Vec<String> = Vec::new();
@@ -139,7 +193,7 @@ mod token_tests{
         // let input : String = String::from(slice);
         let result = vec![String::from(slice)];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
         
     }
 
@@ -150,7 +204,7 @@ mod token_tests{
 
         let result = vec![String::from("input1"), String::from("input2")];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
         
     }
 
@@ -161,7 +215,7 @@ mod token_tests{
 
         let result = vec![String::from("input1"), String::from("input2")];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
         
     }
 
@@ -172,7 +226,7 @@ mod token_tests{
 
         let result = vec![String::from("input1"), String::from("<"), String::from("input2")];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
         
     }
 
@@ -183,7 +237,7 @@ mod token_tests{
         let slice = r#"input1 "filename" input2 "#;
         let result = vec![String::from("input1"), String::from("filename"), String::from("input2")];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
 
     }
 
@@ -193,7 +247,7 @@ mod token_tests{
         let slice = r#"input1 "file < ... name" input2 "#;
         let result = vec![String::from("input1"), String::from("file < ... name"), String::from("input2")];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
 
     }
 
@@ -233,7 +287,7 @@ mod token_tests{
                                         String::from(">"), 
                                         String::from("input2")];
 
-        assert_eq!(get_tokens(slice), result);
+        assert_eq!(tokenize(slice), result);
         
     }
 
