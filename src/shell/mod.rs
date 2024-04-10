@@ -1,8 +1,9 @@
 use std::env::Args;
+use std::fmt::Octal;
 use std::io::{self, BufRead};
 use std::io::Write;
 use std::ffi::{CStr, CString};
-use libc::{O_CREAT, O_TRUNC, O_WRONLY, O_RDONLY};
+use libc::{c_int, O_CREAT, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY};
 use nix::{unistd::{fork, ForkResult, execvp}, sys::wait::wait};
 use std::fs::File;
 
@@ -144,47 +145,51 @@ fn dispatch_command(command: &Command) {
             }
         },
         Command::InputRedirect(src, c) => {
-            unsafe {
-                match fork() {
-                    Ok(ForkResult::Child) => {
-                        // close stdin
-                        let close_result = libc::close(0);
-                        if close_result == -1 {
-                            output("Error closing stdin", true);
-                        }
+            match unsafe{fork()} {
+                Ok(ForkResult::Child) => {
+                    // close stdin
+                    let close_result = unsafe{libc::close(0)};
+                    if close_result == -1 {
+                        output("Error closing stdin", true);
+                    }
 
-                        // redirect input to src file
-                        let open_result = libc::open(src.as_ptr() as *const i8, O_RDONLY);
-                        if open_result == -1 {
-                            output(format!("File not found: {}", src).as_str(), true);
-                        }
-                        dispatch_command(c);
-                        exit(0);
-                    },
-                    _ =>{},
-                }   
-            }
+                    // redirect input to src file
+                    let open_result = unsafe{libc::open(src.as_ptr() as *const i8, O_RDONLY)};
+                    if open_result == -1 {
+                        output(format!("File not found: {}", src).as_str(), true);
+                    }
+                    dispatch_command(c);
+                    exit(0);
+                },
+                Ok(ForkResult::Parent { child: pid }) => {
+                    wait().expect(format!("Execution of program within child process {} failed", pid).as_str());
+                }
+                Err(e) => panic!("Creation of child process failed with error {}", e)
+            }   
         },
         Command::OutputRedirect(dst, c) => {
-            unsafe {
-                match fork() {
-                    Ok(ForkResult::Child) => {
-                        // close stdout
-                        let close_result = libc::close(1);
-                        if close_result == -1 {
-                            output("Error closing stdin", true);
-                        }
 
-                        // redirect output to dst file
-                        let open_result = libc::open(dst.as_ptr() as *const i8, O_WRONLY | O_CREAT | O_TRUNC);
-                        if open_result == -1 {
-                            output(format!("Problem with creating or writing to: {}", dst).as_str(), true);
-                        }
-                        dispatch_command(c);
-                        exit(0);
-                    },
-                    _ =>{},
+            match unsafe{fork()} {
+                Ok(ForkResult::Child) => {
+                    // close stdout
+                    let close_result = unsafe{libc::close(1)};
+                    if close_result == -1 {
+                        output("Error closing stdin", true);
+                    }
+
+                    // redirect output to dst file
+                    // decimal(438) = octal(666): create file in mode 666
+                    let open_result = unsafe{libc::open(dst.as_ptr() as *const i8, O_RDWR | O_CREAT | O_TRUNC, 438)};
+                    if open_result == -1 {
+                        output(format!("Problem with creating or writing to: {}", dst).as_str(), true);
+                    }
+                    dispatch_command(c);
+                    exit(0);
+                },
+                Ok(ForkResult::Parent { child: pid }) => {
+                    wait().expect(format!("Execution of program within child process {} failed", pid).as_str());
                 }
+                Err(e) => panic!("Creation of child process failed with error {}", e)
             }
         }
     }
@@ -360,56 +365,57 @@ fn execute_source(command_tokens : &Vec<String>) {
 //     }
 // }
 
-// #[cfg(test)]
-// mod redirect_tests {
-//     use super::*;
+#[cfg(test)]
+mod redirect_tests {
 
-//     #[test]
-//     fn redirect_test1() {
+    use super::*;
 
-//         let sample_tokens: Vec<String> = vec!["ex", "howdy", ">", "list"].iter().map(|&s| s.into()).collect();
+    fn into_owned_string_vec(str_vec: Vec<&str>) -> Vec<String> {
+        str_vec.iter().map(|s| String::from(*s)).collect()
+    }
 
-//         let input = false;
-//         let output = true;
-//         let src = String::new();
-//         let dst = String::from("list");
-//         let command_tokens = vec![String::from("ex"), String::from("howdy")];
-//         let expected_result = Redirect{input, output, src, dst, command_tokens};
 
-//         assert_eq!(Redirect::detect(&sample_tokens), expected_result);
-//     }
+    #[test]
+    fn redirect_test1() {
+
+        let input = "exe input > outputfile";
+
+        let token_command = Command::Tokens(Box::new(into_owned_string_vec(vec!["exe", "input"])));
+        let expected_command = Command::OutputRedirect(String::from("outputfile"), Box::new(token_command));
+
+        
+        let actual_command = tokens::get_command(input);
+
+        assert_eq!(expected_command, actual_command[0]);
+    }
 
 
     
-//     #[test]
-//     fn redirect_test2() {
+    #[test]
+    fn redirect_test2() {
 
-//         let sample_tokens: Vec<String> = vec!["ex", "howdy", "<", "in", ">", "out"].iter().map(|&s| s.into()).collect();
+        let input = "exe < inputfile > outputfile";
 
-//         let input = true;
-//         let output = true;
-//         let src = String::from("in");
-//         let dst = String::from("out");
-//         let command_tokens = vec![String::from("ex"), String::from("howdy")];
-//         let expected_result = Redirect{input, output, src, dst, command_tokens};
+        let token_command = Command::Tokens(Box::new(into_owned_string_vec(vec!["exe"])));
+        let expected_command = Command::OutputRedirect(String::from("outputfile"), 
+            Box::new(Command::InputRedirect(String::from("inputfile"), Box::new(token_command))));
 
-//         assert_eq!(Redirect::detect(&sample_tokens), expected_result);
-//     }
+        let actual_command = tokens::get_command(input);
+        assert_eq!(expected_command, actual_command[0]);
 
+    }
 
+    #[test]
+    fn redirect_test3() {
 
-//     #[test]
-//     fn redirect_test3() {
+        let input = "exe > outputfile < inputfile ";
 
-//         let sample_tokens: Vec<String> = vec!["ex", "howdy", "<", "in", "in2", ">", "out"].iter().map(|&s| s.into()).collect();
+        let token_command = Command::Tokens(Box::new(into_owned_string_vec(vec!["exe"])));
+        let expected_command = Command::OutputRedirect(String::from("outputfile"), 
+            Box::new(Command::InputRedirect(String::from("inputfile"), Box::new(token_command))));
 
-//         let input = true;
-//         let output = true;
-//         let src = String::from("in");
-//         let dst = String::from("out");
-//         let command_tokens = vec![String::from("ex"), String::from("howdy"), String::from("in2")];
-//         let expected_result = Redirect{input, output, src, dst, command_tokens};
+        let actual_command = tokens::get_command(input);
+        assert_eq!(expected_command, actual_command[0]);
 
-//         assert_eq!(Redirect::detect(&sample_tokens), expected_result);
-//     }
-// }
+    }
+}

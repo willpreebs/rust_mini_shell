@@ -9,14 +9,16 @@ fn sequence(tokens: Vec<String>) -> Vec<Command> {
     }
 
     let r: Vec<&[String]> = tokens.split(|t| t.eq(";")).collect();
+
     if r.len() == 1 {
-        return vec![Command::Tokens(Box::new(tokens))];
+        let v = r[0].to_vec();
+        return vec![split_on_redirection(v)];
     } else {
         let mut c_vec = Vec::new();
         for command_arr in tokens.split(|token| token.eq(";")) {
             let v = command_arr.to_vec();
             if !v.is_empty() {
-                let a = get_command_from_sequenced_tokens(v);
+                let a = split_on_redirection(v);
                 c_vec.push(a);
             }
         }
@@ -25,23 +27,8 @@ fn sequence(tokens: Vec<String>) -> Vec<Command> {
     }
 }
 
-/**
- * v is a vector holding the tokens of a single command (not including multiple sequenced command)
- */
-fn get_command_from_sequenced_tokens(v: Vec<String>) -> Command {
-    if v.len() == 0 {
-        Command::Empty
-    } else {
-        // command      input         output
-        // tee file1 < example.txt > file2
-
-        // Output("file2", Input("example.txt", Tokens([tee, file1])))
-        return split_on_redirection(v);
-    }
-}
-
 fn split_on_redirection(v: Vec<String>) -> Command {
-    // split_output = {[tee, file1, <, example.txt], [file2]
+
     let split_output: Vec<&[String]> = v.split(|e| e.eq(">")).collect();
     if split_output.len() == 1 {
         return split_on_input(v);
@@ -59,10 +46,12 @@ fn split_on_redirection(v: Vec<String>) -> Command {
         return Command::Empty;
     }
     else {
-        return Command::OutputRedirect(split_output[1][0].clone(), Box::new(split_on_input(v)));
+        let mut command: Vec<String> = split_output[0].to_vec();
+        let mut command_snd: Vec<String> = split_output[1].iter().skip(1).map(|b| b.to_owned()).collect();
+        command.append(&mut command_snd);
+        let dst = split_output[1][0].clone();
+        return Command::OutputRedirect(dst, Box::new(split_on_input(command)));
     }
-
-    // -> Output(file2, ) 
 }
 
 fn split_on_input(v: Vec<String>) -> Command {
