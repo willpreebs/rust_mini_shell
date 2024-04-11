@@ -177,9 +177,12 @@ fn dispatch_command(command: &Command) {
                         output("Error closing stdin", true);
                     }
 
+                    let mut clone = dst.clone(); 
+                    clone.push('\0');
+
                     // redirect output to dst file
                     // decimal(438) = octal(666): create file in mode 666
-                    let open_result = unsafe{libc::open(dst.as_ptr() as *const i8, O_RDWR | O_CREAT | O_TRUNC, 438)};
+                    let open_result = unsafe{libc::open(clone.as_ptr() as *const i8, O_RDWR | O_CREAT | O_TRUNC, 438)};
                     if open_result == -1 {
                         output(format!("Problem with creating or writing to: {}", dst).as_str(), true);
                     }
@@ -199,102 +202,6 @@ fn convert_string_to_cstring(s: &String) -> CString {
     return CString::new(s.as_str()).unwrap();
 }
 
-// fn handle_redirects(red: Redirect) {
-
-//     let filename: String = red.command_tokens[0].clone();   
-//     let filename_c: CString = CString::new(filename.as_str()).expect("CString conversion failed");
-
-//     let cstrs: Vec<CString> = red.command_tokens.iter()
-//     .map(|s| CString::new(s as &str).expect("failure converting str to CString")).collect::<Vec<CString>>();
-
-//     let output_file = red.dst.trim().as_ptr() as *const i8;
-//     let input_file = red.src.trim().as_ptr() as *const i8;
-
-//     if BUILT_IN_MULT_ARGS.contains(&red.command_tokens[0].as_str()) && red.command_tokens.len() > 1 {
-
-//         match red.command_tokens[0].clone().as_str() {
-//             "cd" => execute_cd(&red.command_tokens[1].clone()),
-//             "source" => execute_source(&red.command_tokens),
-//             _ => ()
-//         }
-//         return;
-//     }
-    
-//     match unsafe{fork()} {
-
-//         Ok(ForkResult::Child) => {
-
-//             unsafe {
-//                 //bit of C trickery to replace stdin or stdout with a new file
-//                 if red.input {
-//                     let close_result = libc::close(0);
-//                     if close_result == -1 {
-//                         output("Error closing stdin", true);
-//                         exit(0);
-//                     }
-
-//                     let open_result = libc::open(input_file, O_RDONLY);
-//                     if open_result == -1 {
-//                         output(format!("File not found: {}", &red.src).as_str(), true);
-//                         exit(0);
-//                     }
-//                 }
-//                 if red.output {
-//                     let close_result = libc::close(1);
-//                     if close_result == -1 {
-//                         output("Error closing stdout", true);
-//                         exit(0);
-//                     }
-
-//                     let open_result = libc::open(output_file, O_WRONLY | O_CREAT | O_TRUNC);
-//                     if open_result == -1 {
-//                         output(format!("File not found: {}", &red.dst).as_str(), true);
-//                         exit(0);
-//                     }
-//                 }
-//             }
-//             execute_within_child(filename, &filename_c, &cstrs);
-//             unsafe{exit(0)}
-//         }
-//         Ok(ForkResult::Parent{child: _, ..}) => {
-//             wait().expect("Child process failed");
-//         }
-//         Err(e) => output(format!("fork failed with error: {}", e).as_str(), true)
-//     }
-
-// }
-
-// fn sequence(tokens: &Vec<String>) -> Vec<Vec<String>> {
-
-//     let mut v2: Vec<Vec<String>> = Vec::new();
-//     let mut v: Vec<String> = Vec::new();
-
-//     for s in tokens.iter() {
-        
-//         match s.as_str() {
-//             ";" => {
-//                 v2.push(v.clone());
-//                 v = Vec::new();
-//             }
-//             _ => v.push(s.to_string())
-//         }
-//     }
-//     if !v.is_empty() {
-//         v2.push(v);
-//     }
-
-//     return v2;
-// }
-
-fn execute_within_child(filename: String, filename_c: &CStr, cstrs: &Vec<CString>) {
-
-    match execvp(filename_c, cstrs) {
-        Ok(_) => (),
-        Err(_) => {
-            output(format!("Program not found: {}", filename).as_str(), true);
-        }
-    }
-}
 
 fn execute_cd(path: &String) {
     match std::env::set_current_dir(path) {
